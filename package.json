@@ -1,0 +1,6 @@
+{
+  "type": "module",
+  "dependencies": {
+    "rescript": "^10.0.1"
+  }
+}
