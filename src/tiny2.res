@@ -43,8 +43,8 @@ module SmallStep = {
   let rec eval = (instrs: instrs, stack: stack): int => {
     switch (instrs, stack) {
     | (list{Cst(i), ...rest}, _) => eval(rest, list{i, ...stack})
-    | (list{Add, ...rest}, list{a, b, ...stack}) => eval(rest, list{a + b, b, ...stack})
-    | (list{Mul, ...rest}, list{a, b, ...stack}) => eval(rest, list{a * b, b, ...stack})
+    | (list{Add, ...rest}, list{a, b, ...stack}) => eval(rest, list{a + b, ...stack})
+    | (list{Mul, ...rest}, list{a, b, ...stack}) => eval(rest, list{a * b, ...stack})
     | (list{Var(k), ...rest}, stack) => eval(rest, list{stack->List.getExn(k), ...stack})
     | (list{Pop, ...rest}, stack) => eval(rest, stack->List.drop(1)->Option.getExn)
     | (list{Swap, ...rest}, list{a, b, ...stack}) => eval(rest, list{b, a, ...stack})
@@ -60,13 +60,13 @@ let rec compile_direct = (src: BigStep.expr, env: SmallStep.env): SmallStep.inst
   | Add(expr1, expr2) => {
       let target1 = compile_direct(expr1, env)
       let target2 = compile_direct(expr2, env)
-      Belt.List.concatMany([target1, target2, list{Add, Swap, Pop}])
+      Belt.List.concatMany([target1, target2, list{Add}])
     }
 
   | Mul(expr1, expr2) => {
       let target1 = compile_direct(expr1, env)
       let target2 = compile_direct(expr2, env)
-      List.concatMany([target1, target2, list{Mul, Swap, Pop}])
+      List.concatMany([target1, target2, list{Mul}])
     }
 
   | Var(name) => env->List.getAssoc(name, \"==")->Option.getExn
@@ -109,6 +109,7 @@ module NameLess = {
   let rec to_nameless = (src: BigStep.expr, cenv: cenv): expr => {
     switch src {
     | Cst(i) => Cst(i)
+    // The `#STACK_VAR` is a padding to offset the stack slot occupied by expr1
     | Add(expr1, expr2) => Add(to_nameless(expr1, cenv), to_nameless(expr2, cenv->List.add("#STACK_VAR")))
     | Mul(expr1, expr2) => Mul(to_nameless(expr1, cenv), to_nameless(expr2, cenv->List.add("#STACK_VAR")))
     | Var(name) => Var(cenv->find_index(name)->Option.getExn)
@@ -123,18 +124,18 @@ module NameLess = {
     | Add(expr1, expr2) => {
         let target1 = compile_nameless(expr1)
         let target2 = compile_nameless(expr2)
-        Belt.List.concatMany([target1, target2, list{Add, Swap, Pop}])
+        Belt.List.concatMany([target1, target2, list{Add}])
       }
 
     | Mul(expr1, expr2) => {
         let target1 = compile_nameless(expr1)
         let target2 = compile_nameless(expr2)
-        Belt.List.concatMany([target1, target2, list{Mul, Swap, Pop}])
+        Belt.List.concatMany([target1, target2, list{Mul}])
       }
 
     | Var(k) => list{Var(k)}
 
-    | Let(expr1, expr2) => List.concatMany([compile_nameless(expr1), compile_nameless(expr2)])
+    | Let(expr1, expr2) => List.concatMany([compile_nameless(expr1), compile_nameless(expr2), list{Swap, Pop}])
     }
   }
 }
@@ -146,10 +147,10 @@ module Tests = {
     let nameless = NameLess.to_nameless(src, list{})
     let instrs2 = NameLess.compile_nameless(nameless)
     let computed2 = SmallStep.eval(instrs2, list{})
-    // Js.log(j`$computed1 $computed2`)
-    assert (computed1 == BigStep.eval(src, list{}))
-    assert (computed2 == BigStep.eval(src, list{}))
-    assert (computed1 == computed2)
+    let ans = BigStep.eval(src, list{})
+    // Js.log(j`$ans $computed1 $computed2`)
+    assert (computed1 == ans)
+    assert (computed2 == ans)
   }
 
   let find_index_test = () => {
