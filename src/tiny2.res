@@ -176,6 +176,7 @@ module Tests = {
       (Let("a", Mul(Cst(5), Cst(5)), Mul(Var("a"), Var("a"))), 625),
       (Let("a", Cst(2), Let("b", Mul(Cst(5), Cst(5)), Mul(Var("b"), Var("a")))), 50),
       (Let("a", Cst(1), Let("a", Cst(2), Var("a"))), 2),
+      (Let("a", Let("a", Cst(1), Add(Var("a"), Var("a"))), Var("a")), 2),
     ]
     Js.log("let_var_test")
     tests->Array.forEachWithIndex((i, (t, res)) => {
@@ -207,6 +208,7 @@ module Tests = {
       // [25, 25, 2]
       // [25, 25, 25, 2]
       Let("a", Cst(1), Let("a", Cst(2), Var("a"))),
+      Let("a", Let("a", Cst(1), Add(Var("a"), Var("a"))), Var("a")),
     ]
     Js.log("basic_test")
     tests->Array.forEachWithIndex((i, t) => {
