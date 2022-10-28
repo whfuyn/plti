@@ -1,5 +1,12 @@
 open Belt
 
+exception Anyhow(string)
+
+let panic = (msg: string) => {
+  Js.log(j`\nPanic: $msg`)
+  raise(Anyhow(msg))
+}
+
 module BigStep = {
   type env = list<(string, int)>
 
@@ -15,7 +22,8 @@ module BigStep = {
     | Cst(i) => i
     | Add(expr1, expr2) => eval(expr1, env) + eval(expr2, env)
     | Mul(expr1, expr2) => eval(expr1, env) * eval(expr2, env)
-    | Var(name) => env->List.getAssoc(name, (a, b) => a == b)->Option.getExn
+    // The use of \"==" is a bit of hacky.
+    | Var(name) => env->List.getAssoc(name, \"==")->Option.getExn
     | Let(name, let_expr, in_expr) => eval(in_expr, list{(name, eval(let_expr, env)), ...env})
     }
   }
@@ -55,7 +63,7 @@ let rec compile = (src: BigStep.expr, env: SmallStep.env): SmallStep.instrs => {
       List.concatMany([target1, target2, list{Mul}])
     }
 
-  | Var(name) => env->List.getAssoc(name, (a, b) => a == b)->Option.getExn
+  | Var(name) => env->List.getAssoc(name, \"==")->Option.getExn
 
   | Let(name, let_expr, in_expr) => {
       let target = compile(let_expr, env)
@@ -76,6 +84,7 @@ module Tests = {
       (BigStep.Let("a", Cst(5), Mul(Var("a"), Var("a"))), 25),
       (Let("a", Mul(Cst(5), Cst(5)), Mul(Var("a"), Var("a"))), 625),
       (Let("a", Cst(2), Let("b", Mul(Cst(5), Cst(5)), Mul(Var("b"), Var("a")))), 50),
+      (Let("a", Cst(1), Let("a", Cst(2), Var("a"))), 2),
     ]
     Js.log("let_var_test")
     tests->Array.forEachWithIndex((i, (t, res)) => {
@@ -97,6 +106,7 @@ module Tests = {
       Let("a", Cst(5), Mul(Var("a"), Var("a"))),
       Let("a", Mul(Cst(5), Cst(5)), Mul(Var("a"), Var("a"))),
       Let("a", Cst(2), Let("b", Mul(Cst(5), Cst(5)), Mul(Var("b"), Var("a")))),
+      Let("a", Cst(1), Let("a", Cst(2), Var("a"))),
     ]
     Js.log("basic_test")
     tests->Array.forEachWithIndex((i, t) => {
