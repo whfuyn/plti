@@ -10,27 +10,25 @@ let panic = (msg: string) => {
   raise(Anyhow(msg))
 }
 
-module VM = {
-  type instr = Cst(int) | Add | Mul | Var(int) | Pop | Swap
-  type instrs = list<instr>
-  type operand = int
-  type stack = list<operand>
+let print_arr = (arr: array<int>) => {
+  arr->Array.forEach(x => Js.log(x))
+}
 
-  type env = list<(string, instrs)>
-
-  let rec eval = (instrs: instrs, stack: stack): int => {
-    switch (instrs, stack) {
-    | (list{Cst(i), ...rest}, _) => eval(rest, list{i, ...stack})
-    | (list{Add, ...rest}, list{a, b, ...stack}) => eval(rest, list{a + b, ...stack})
-    | (list{Mul, ...rest}, list{a, b, ...stack}) => eval(rest, list{a * b, ...stack})
-    | (list{Var(k), ...rest}, stack) => eval(rest, list{stack->List.getExn(k), ...stack})
-    | (list{Pop, ...rest}, stack) => eval(rest, stack->List.drop(1)->Option.getExn)
-    | (list{Swap, ...rest}, list{a, b, ...stack}) => eval(rest, list{b, a, ...stack})
-    | (list{}, list{res, ..._}) => res
-    | _ => panic("unexpected vm state")
-    }
+// `find` not found in Belt.List, so.
+// Feels like Haskell.
+let rec rfind = (ls: list<'a>, key: 'a): option<int> => {
+  switch ls {
+  | list{item, ...rest} =>
+      // Later match first
+      switch rest->rfind(key) {
+      | Some(i) => Some(i + 1)
+      | None if item == key => Some(0)
+      | None => None
+      }
+  | list{} => None
   }
 }
+
 
 module Ast = {
   type env = list<(string, int)>
@@ -54,31 +52,8 @@ module Ast = {
   }
 }
 
-let rec compile_ast = (src: Ast.expr, env: VM.env): VM.instrs => {
-  switch src {
-  | Cst(i) => list{Cst(i)}
-  | Add(expr1, expr2) => {
-      let target1 = compile_ast(expr1, env)
-      let target2 = compile_ast(expr2, env)
-      List.concatMany([target1, target2, list{Add}])
-    }
-
-  | Mul(expr1, expr2) => {
-      let target1 = compile_ast(expr1, env)
-      let target2 = compile_ast(expr2, env)
-      List.concatMany([target1, target2, list{Mul}])
-    }
-
-  | Var(name) => env->List.getAssoc(name, \"==")->Option.getExn
-
-  | Let(name, let_expr, in_expr) => {
-      let target = compile_ast(let_expr, env)
-      compile_ast(in_expr, list{(name, target), ...env})
-    }
-  }
-}
-
 module NameLess = {
+  type env = list<int>
   type cenv = list<string>
   type stack = list<int>
 
@@ -89,84 +64,205 @@ module NameLess = {
     | Var(int)
     | Let(expr, expr)
 
-  // `find` not found in Belt.List, so.
-  // Feels like Haskell.
-  let rec find_index = (cenv: cenv, key: string): option<int> => {
-    switch cenv {
-    | list{item, ...rest} =>
-      if item == key {
-        Some(0)
-      } else {
-        switch rest->find_index(key) {
-        | Some(i) => Some(i + 1)
-        | None => None
-        }
-      }
-    | list{} => None
+  let rec eval = (expr: expr, env: env): int => {
+    switch expr {
+    | Cst(i) => i
+    | Add(expr1, expr2) => eval(expr1, env) + eval(expr2, env)
+    | Mul(expr1, expr2) => eval(expr1, env) * eval(expr2, env)
+    | Var(i) => env->List.get(i)->Option.getExn
+    | Let(let_expr, in_expr) => eval(in_expr, list{eval(let_expr, env), ...env})
     }
   }
 
-  let rec to_nameless = (src: Ast.expr, cenv: cenv): expr => {
+  let rec from_ast = (src: Ast.expr, cenv: cenv): expr => {
     switch src {
     | Cst(i) => Cst(i)
-    // The `#STACK_VAR` is a padding to offset the stack slot occupied by expr1
-    | Add(expr1, expr2) =>
-      Add(to_nameless(expr1, cenv), to_nameless(expr2, cenv->List.add("#STACK_VAR")))
-    | Mul(expr1, expr2) =>
-      Mul(to_nameless(expr1, cenv), to_nameless(expr2, cenv->List.add("#STACK_VAR")))
-    | Var(name) => Var(cenv->find_index(name)->Option.getExn)
+    | Add(expr1, expr2) => Add(from_ast(expr1, cenv), from_ast(expr2, cenv))
+    | Mul(expr1, expr2) => Mul(from_ast(expr1, cenv), from_ast(expr2, cenv))
+    | Var(name) => Var(cenv->rfind(name)->Option.getExn)
     | Let(name, let_expr, in_expr) =>
-      Let(to_nameless(let_expr, cenv), to_nameless(in_expr, cenv->List.add(name)))
+      Let(from_ast(let_expr, cenv), from_ast(in_expr, List.concat(cenv, list{name})))
     }
+  }
+
+  let rec display = (expr): string => {
+    switch expr {
+      | Cst(i) => j`Cst($i)`
+      | Add(expr1, expr2) => "Add(" ++ display(expr1) ++ ", " ++ display(expr2) ++ ")"
+      | Mul(expr1, expr2) => "Mul(" ++ display(expr1) ++ ", " ++ display(expr2) ++ ")"
+      | Var(i) => j`Var($i)`
+      | Let(expr1, expr2) => "Let(" ++ display(expr1) ++ ", " ++ display(expr2) ++ ")"
+    }
+  }
+
+  let print = (expr) => {
+    let s = display(expr)
+    Js.log(j`$s`)
   }
 }
 
-let rec compile_nameless = (src: NameLess.expr): VM.instrs => {
-  switch src {
-  | Cst(i) => list{Cst(i)}
-  | Add(expr1, expr2) => {
-      let target1 = compile_nameless(expr1)
-      let target2 = compile_nameless(expr2)
-      Belt.List.concatMany([target1, target2, list{Add}])
+module VM = {
+  type instr = Cst(int) | Add | Mul | Var(int) | Pop | Swap
+  type instrs = list<instr>
+  type operand = int
+  type stack = list<operand>
+
+  let display = (instr): string => {
+    switch instr {
+      | Cst(i) => j`Cst($i)`
+      | Add => "Add"
+      | Mul => "Mul"
+      | Var(i) => j`Var($i)`
+      | Pop => "Pop"
+      | Swap => "Swap"
     }
+  }
 
-  | Mul(expr1, expr2) => {
-      let target1 = compile_nameless(expr1)
-      let target2 = compile_nameless(expr2)
-      Belt.List.concatMany([target1, target2, list{Mul}])
+  let rec print = (instrs) => {
+    switch instrs {
+      |list{} => ()
+      |list{hd, ...rest} => {
+        let s = display(hd)
+        Js.log(j`$s `)
+        print(rest)
+      }
     }
+  }
 
-  | Var(k) => list{Var(k)}
+  let rec eval = (instrs: instrs, stack: stack): int => {
+    switch (instrs, stack) {
+    | (list{Cst(i), ...rest}, _) => eval(rest, list{i, ...stack})
+    | (list{Add, ...rest}, list{a, b, ...stack}) => eval(rest, list{a + b, ...stack})
+    | (list{Mul, ...rest}, list{a, b, ...stack}) => eval(rest, list{a * b, ...stack})
+    | (list{Var(k), ...rest}, stack) => eval(rest, list{stack->List.getExn(k), ...stack})
+    | (list{Pop, ...rest}, stack) => eval(rest, stack->List.drop(1)->Option.getExn)
+    | (list{Swap, ...rest}, list{a, b, ...stack}) => eval(rest, list{b, a, ...stack})
+    | (list{}, list{res, ..._}) => res
+    | _ => panic("unexpected vm state")
+    }
+  }
 
-  | Let(expr1, expr2) =>
-    List.concatMany([compile_nameless(expr1), compile_nameless(expr2), list{Swap, Pop}])
+  let alloc_tmp = (lvp) => {
+    open Js.Array
+    switch lvp->pop {
+      | Some(record) => {
+        let _ = push(record + 1, lvp)
+      }
+      | None => ()
+    }
+  }
+
+  let free_tmp = (lvp) => {
+    open Js.Array
+    switch lvp->pop {
+      | Some(record) => {
+        let _ = push(record - 1, lvp)
+      }
+      | None => ()
+    }
+  }
+
+  let rec from_nameless = (expr: NameLess.expr,  /* local variable position */ lvp: array<int>): instrs => {
+    open Js.Array
+    switch expr {
+      | Cst(i) => {
+        alloc_tmp(lvp)
+        list{Cst(i)}
+      }
+      | Add(expr1, expr2) => {
+        let instrs1 = from_nameless(expr1, lvp)
+        let instrs2 = from_nameless(expr2, lvp)
+        free_tmp(lvp)
+        List.concatMany([instrs1, instrs2, list{Add}])
+      }
+      | Mul(expr1, expr2) => {
+        let instrs1 = from_nameless(expr1, lvp)
+        let instrs2 = from_nameless(expr2, lvp)
+        free_tmp(lvp)
+        List.concatMany([instrs1, instrs2, list{Mul}])
+      }
+      | Var(k) => {
+        // Calculate the rfind of the refered local variable. e.g.
+        // the lvp for stack:
+        // [var_0, tmp, tmp, var_1, tmp, var_2]
+        // is
+        // [2, 1, 0]
+        let pos = reduce(\"+", 0, sliceFrom(k, lvp))
+        // Js.log("lvp")
+        // print_arr(lvp)
+        // Js.log("lvp done")
+        alloc_tmp(lvp)
+        list{Var(pos)}
+      }
+      | Let(let_expr, in_expr) => {
+        let let_instrs = from_nameless(let_expr, lvp)
+        // Record a new local variable which is at the top of the stack (i.e. offset 0)
+        let _ = push(0, lvp)
+        let in_instrs = from_nameless(in_expr, lvp)
+        let _ = pop(lvp)
+        List.concatMany([let_instrs, in_instrs, list{Swap, Pop}])
+      }
+    }
+  }
+  let from_nameless = (expr) => from_nameless(expr, [])
+
+  let rec from_ast = (src: Ast.expr, env: list<(string, instrs)>): instrs => {
+    switch src {
+    | Cst(i) => list{Cst(i)}
+    | Add(expr1, expr2) => {
+        let target1 = from_ast(expr1, env)
+        let target2 = from_ast(expr2, env)
+        List.concatMany([target1, target2, list{Add}])
+      }
+    | Mul(expr1, expr2) => {
+        let target1 = from_ast(expr1, env)
+        let target2 = from_ast(expr2, env)
+        List.concatMany([target1, target2, list{Mul}])
+      }
+    | Var(name) => env->List.getAssoc(name, \"==")->Option.getExn
+    | Let(name, let_expr, in_expr) => {
+        let target = from_ast(let_expr, env)
+        from_ast(in_expr, list{(name, target), ...env})
+      }
+    }
   }
 }
 
 module Tests = {
   let test_compile = (src: Ast.expr) => {
-    let instrs1 = compile_ast(src, list{})
-    let computed1 = VM.eval(instrs1, list{})
+    let ast_instrs = VM.from_ast(src, list{})
+    let ast_res = VM.eval(ast_instrs, list{})
+    // Js.log("eval ok")
 
-    let nameless = NameLess.to_nameless(src, list{})
-    let instrs2 = compile_nameless(nameless)
-    let computed2 = VM.eval(instrs2, list{})
+    let nameless = NameLess.from_ast(src, list{})
+    // Js.log("from ast ok")
+    // NameLess.print(nameless)
+    let nameless_instrs = VM.from_nameless(nameless)
+    // Js.log("from nameless ok")
+    // VM.print(nameless_instrs)
+    let nameless_res = VM.eval(nameless_instrs, list{})
+    // Js.log("vm eval ok")
     let ans = Ast.eval(src, list{})
-    // Js.log(j`$ans $computed1 $computed2`)
-    assert (computed1 == ans)
-    assert (computed2 == ans)
+    // Js.log("ast eval ok")
+    // Js.log(j`$ans $ast_res $nameless_res`)
+    assert (ast_res == ans)
+    assert (nameless_res == ans)
   }
 
-  let find_index_test = () => {
-    Js.log("find_index_test")
+  let rfind_test = () => {
+    Js.log("rfind_test")
     let cenv = list{}
-    assert (cenv->NameLess.find_index("0") == None)
+    assert (cenv->rfind("0") == None)
     let cenv = list{"0"}
-    assert (cenv->NameLess.find_index("0") == Some(0))
+    assert (cenv->rfind("0") == Some(0))
+    let cenv = list{"0", "0"}
+    assert (cenv->rfind("0") == Some(1))
+    let cenv = list{"0", "1", "0", "3"}
+    assert (cenv->rfind("0") == Some(2))
     let cenv = list{"0", "1", "2", "3"}
-    assert (cenv->NameLess.find_index("0") == Some(0))
-    assert (cenv->NameLess.find_index("2") == Some(2))
-    assert (cenv->NameLess.find_index("3") == Some(3))
+    assert (cenv->rfind("0") == Some(0))
+    assert (cenv->rfind("2") == Some(2))
+    assert (cenv->rfind("3") == Some(3))
     Js.log("passed")
   }
 
@@ -184,6 +280,26 @@ module Tests = {
       let i = i + 1
       Js.log(j`test $i passed`)
     })
+    Js.log("passed")
+  }
+
+  let test_eval_nameless = () => {
+      let tests = [
+        (NameLess.Cst(42), 42),
+        (Add(Cst(2), Cst(3)), 5),
+        (Mul(Cst(2), Cst(3)), 6),
+        (Let(Cst(42), Var(0)), 42),
+        (Let(Let(Cst(1), Add(Var(0), Var(0))), Var(0)), 2),
+        (Let(Add(Cst(2), Cst(2)), Mul(Var(0), Var(0))), 16),
+        (Let(Cst(1), Let(Cst(2), Let(Cst(3), Mul(Var(0), Add(Var(1), Var(2)))))), 9),
+      ]
+      Js.log("test_eval_nameless")
+      tests->Array.forEachWithIndex((i, (t, res)) => {
+        assert (NameLess.eval(t, list{}) == res)
+        let i = i + 1
+        Js.log(j`test $i passed`)
+      })
+      Js.log("passed")
   }
 
   let basic_test = () => {
@@ -198,15 +314,6 @@ module Tests = {
       Let("a", Cst(5), Mul(Var("a"), Var("a"))),
       Let("a", Mul(Cst(5), Cst(5)), Mul(Var("a"), Var("a"))),
       Let("a", Cst(2), Let("b", Mul(Cst(5), Cst(5)), Mul(Var("b"), Var("a")))),
-      // ^
-      // | This it's a debug scratch of the previous test, it output 625 instead of 50
-      // before I fix it with the `#STACK_VAR` padding.
-      // Let(Cst(2), Let(Mul(Cst(5), Cst(5)), Mul(Var(0), Var(1))))))  <- nameless
-      // [2]  <- stack state
-      // [25, 2]
-      // [25, 25, 2]
-      // [25, 25, 2]
-      // [25, 25, 25, 2]
       Let("a", Cst(1), Let("a", Cst(2), Var("a"))),
       Let("a", Let("a", Cst(1), Add(Var("a"), Var("a"))), Var("a")),
     ]
@@ -216,9 +323,17 @@ module Tests = {
       let i = i + 1
       Js.log(j`test $i passed`)
     })
+
+    Js.log("passed")
+  }
+
+  let run_tests = () => {
+    let_var_test()
+    rfind_test()
+    basic_test()
+    test_eval_nameless()
   }
 }
 
-Tests.let_var_test()
-Tests.find_index_test()
-Tests.basic_test()
+
+Tests.run_tests()
