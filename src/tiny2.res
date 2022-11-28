@@ -152,33 +152,20 @@ module VM = {
     }
   }
 
-  let free_tmp = (lvp) => {
-    open Js.Array
-    switch lvp->pop {
-      | Some(record) => {
-        let _ = push(record - 1, lvp)
-      }
-      | None => ()
-    }
-  }
-
   let rec from_nameless = (expr: NameLess.expr,  /* local variable position */ lvp: array<int>): instrs => {
     open Js.Array
     switch expr {
-      | Cst(i) => {
-        alloc_tmp(lvp)
-        list{Cst(i)}
-      }
+      | Cst(i) => list{Cst(i)}
       | Add(expr1, expr2) => {
         let instrs1 = from_nameless(expr1, lvp)
+        alloc_tmp(lvp)
         let instrs2 = from_nameless(expr2, lvp)
-        free_tmp(lvp)
         List.concatMany([instrs1, instrs2, list{Add}])
       }
       | Mul(expr1, expr2) => {
         let instrs1 = from_nameless(expr1, lvp)
+        alloc_tmp(lvp)
         let instrs2 = from_nameless(expr2, lvp)
-        free_tmp(lvp)
         List.concatMany([instrs1, instrs2, list{Mul}])
       }
       | Var(k) => {
@@ -191,7 +178,7 @@ module VM = {
         // Js.log("lvp")
         // print_arr(lvp)
         // Js.log("lvp done")
-        alloc_tmp(lvp)
+        // alloc_tmp(lvp)
         list{Var(pos)}
       }
       | Let(let_expr, in_expr) => {
@@ -249,8 +236,8 @@ module Tests = {
     assert (nameless_res == ans)
   }
 
-  let rfind_test = () => {
-    Js.log("rfind_test")
+  let test_rfind = () => {
+    Js.log("test_rfind")
     let cenv = list{}
     assert (cenv->rfind("0") == None)
     let cenv = list{"0"}
@@ -266,7 +253,7 @@ module Tests = {
     Js.log("passed")
   }
 
-  let let_var_test = () => {
+  let test_let_var = () => {
     let tests = [
       (Ast.Let("a", Cst(5), Mul(Var("a"), Var("a"))), 25),
       (Let("a", Mul(Cst(5), Cst(5)), Mul(Var("a"), Var("a"))), 625),
@@ -274,7 +261,7 @@ module Tests = {
       (Let("a", Cst(1), Let("a", Cst(2), Var("a"))), 2),
       (Let("a", Let("a", Cst(1), Add(Var("a"), Var("a"))), Var("a")), 2),
     ]
-    Js.log("let_var_test")
+    Js.log("test_let_var")
     tests->Array.forEachWithIndex((i, (t, res)) => {
       assert (Ast.eval(t, list{}) == res)
       let i = i + 1
@@ -328,8 +315,8 @@ module Tests = {
   }
 
   let run_tests = () => {
-    let_var_test()
-    rfind_test()
+    test_let_var()
+    test_rfind()
     basic_test()
     test_eval_nameless()
   }
